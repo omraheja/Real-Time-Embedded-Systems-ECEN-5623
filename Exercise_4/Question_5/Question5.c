@@ -1468,7 +1468,7 @@ int main(int argc,char **argv)
 
 	/* Assign max priority to main thread */
         rc=sched_getparam(mainpid, &main_param);
-        main_param.sched_priority=rt_max_prio;
+        main_param.sched_priority=rt_max_prio;  
  
 	/* Set the scheduling policy along with priority */
         rc=sched_setscheduler(getpid(), SCHED_FIFO, &main_param);
@@ -1495,7 +1495,7 @@ int main(int argc,char **argv)
                 CPU_ZERO(&threadcpu);
                 CPU_SET(3, &threadcpu);
 
-                rc=pthread_attr_init(&rt_sched_attr[i]);
+	        rc=pthread_attr_init(&rt_sched_attr[i]);
                 rc=pthread_attr_setinheritsched(&rt_sched_attr[i], PTHREAD_EXPLICIT_SCHED);
                 rc=pthread_attr_setschedpolicy(&rt_sched_attr[i], SCHED_FIFO);
                 rc=pthread_attr_setaffinity_np(&rt_sched_attr[i], sizeof(cpu_set_t), &threadcpu);
