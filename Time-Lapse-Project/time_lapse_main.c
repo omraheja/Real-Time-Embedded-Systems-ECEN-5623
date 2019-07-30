@@ -179,6 +179,11 @@ static void init_read(unsigned int buffer_size);
 static void init_mmap(void);
 static void init_userp(unsigned int buffer_size);
 static void usage(FILE *fp, int argc, char **argv);
+static void mainloop(void);
+static int read_frame(void);
+static void process_image(const void *p, int size);
+static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec *time);
+void yuv2rgb(int y, int u, int v, unsigned char *r, unsigned char *g, unsigned char *b);
 
 void *Sequencer(void *threadp);
 void *Service_1(void *threadp);
@@ -825,16 +830,10 @@ void *Sequencer(void *threadp)
     unsigned long long seqCnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
 
-//    gettimeofday(&current_time_val, (struct timezone *)0);
-//    syslog(LOG_CRIT, "Sequencer thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-//    printf("Sequencer thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-
     do
     {
         delay_cnt=0; residual=0.0;
 
-        //gettimeofday(&current_time_val, (struct timezone *)0);
-        //syslog(LOG_CRIT, "Sequencer thread prior to delay @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
         do
         {
             rc=nanosleep(&delay_time, &remaining_time);
@@ -856,8 +855,6 @@ void *Sequencer(void *threadp)
         } while((residual > 0.0) && (delay_cnt < 100));
 
         seqCnt++;
-        //gettimeofday(&current_time_val, (struct timezone *)0);
-        //syslog(LOG_CRIT, "Sequencer cycle %llu @ sec=%d, msec=%d\n", seqCnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
 
         if(delay_cnt > 1) printf("Sequencer looping delay %d\n", delay_cnt);
@@ -899,18 +896,13 @@ void *Service_1(void *threadp)
     struct timespec S1_start_time;
     struct timespec S1_end_time;
 
-    //gettimeofday(&current_time_val, (struct timezone *)0);
-    //syslog(LOG_CRIT, "Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-    //printf("Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-
     while(!abortS1)
     {
         sem_wait(&semS1);
         S1Cnt++;
 	clock_gettime(CLOCK_REALTIME, &S1_start_time);
-	printf("S1 Count: %d\t S1 Time: %lf seconds\n",S1Cnt,((double)S1_start_time.tv_sec + (double)((S1_start_time.tv_nsec)/(double)1000000000)));
-        //gettimeofday(&current_time_val, (struct timezone *)0);
-        //syslog(LOG_CRIT, "Frame Sampler release %llu @ sec=%d, msec=%d\n", S1Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+	printf("S1 Count: %lld\t S1 Time: %lf seconds\n",S1Cnt,((double)S1_start_time.tv_sec + (double)((S1_start_time.tv_nsec)/(double)1000000000)));
+	mainloop();
     }
 
     pthread_exit((void *)0);
@@ -927,20 +919,14 @@ void *Service_2(void *threadp)
     struct timespec S2_start_time;
     struct timespec S2_end_time;
 
-    //gettimeofday(&current_time_val, (struct timezone *)0);
-    //syslog(LOG_CRIT, "Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-    //printf("Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-
     while(!abortS2)
     {
         sem_wait(&semS2);
         S2Cnt++;
 
 	clock_gettime(CLOCK_REALTIME, &S2_start_time);
-        printf("S2 Count: %d\t S2 Time: %lf seconds\n",S2Cnt,((double)S2_start_time.tv_sec + (double)((S2_start_time.tv_nsec)/(double)1000000000)));
+        printf("S2 Count: %lld\t S2 Time: %lf seconds\n",S2Cnt,((double)S2_start_time.tv_sec + (double)((S2_start_time.tv_nsec)/(double)1000000000)));
 
-        //gettimeofday(&current_time_val, (struct timezone *)0);
-        //syslog(LOG_CRIT, "Frame Sampler release %llu @ sec=%d, msec=%d\n", S1Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
     }
 
     pthread_exit((void *)0);
@@ -957,36 +943,340 @@ void *Service_3(void *threadp)
     struct timespec S3_start_time;
     struct timespec S3_end_time;
 
-    //gettimeofday(&current_time_val, (struct timezone *)0);
-    //syslog(LOG_CRIT, "Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-    //printf("Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-
     while(!abortS3)
     {
         sem_wait(&semS3);
         S3Cnt++;
 	clock_gettime(CLOCK_REALTIME, &S3_start_time);
-        printf("S3 Count: %d\t S3 Time: %lf seconds\n",S3Cnt,((double)S3_start_time.tv_sec + (double)((S3_start_time.tv_nsec)/(double)1000000000)));
+        printf("S3 Count: %lld\t S3 Time: %lf seconds\n",S3Cnt,((double)S3_start_time.tv_sec + (double)((S3_start_time.tv_nsec)/(double)1000000000)));
 
-
-        //gettimeofday(&current_time_val, (struct timezone *)0);
-        //syslog(LOG_CRIT, "Frame Sampler release %llu @ sec=%d, msec=%d\n", S1Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
     }
 
     pthread_exit((void *)0);
 }
 
+
 /******************************* FUNCTION 19 ****************************************/
+static void mainloop(void)
+{
+//    unsigned int count;
+    struct timespec read_delay;
+    struct timespec time_error;
+
+    read_delay.tv_sec=0;
+    read_delay.tv_nsec=30000;
+
+//    count = frame_count;
+
+//    while (count > 0)
+//    {
+//       for (;;)
+//        {
+            fd_set fds;
+            struct timeval tv;
+            int r;
+
+            FD_ZERO(&fds);
+            FD_SET(fd, &fds);
+
+            /* Timeout. */
+            tv.tv_sec = 2;
+            tv.tv_usec = 0;
+
+            r = select(fd + 1, &fds, NULL, NULL, &tv);
+
+            if (-1 == r)
+            {
+                if (EINTR == errno)
+//                    continue;
+                errno_exit("select");
+            }
+
+            if (0 == r)
+            {
+                fprintf(stderr, "select timeout\n");
+                exit(EXIT_FAILURE);
+            }
+
+            if (read_frame())
+            {
+                if(nanosleep(&read_delay, &time_error) != 0)
+                    perror("nanosleep");
+                else
+                    printf("time_error.tv_sec=%ld, time_error.tv_nsec=%ld\n", time_error.tv_sec, time_error.tv_nsec);
+
+//                count--;
+//                break;
+            }
+
+            /* EAGAIN - continue select loop unless count done. */
+//            if(count <= 0) break;
+//        }
+
+//        if(count <= 0) break;
+//    }
+}
 
 
 /******************************* FUNCTION 20 ****************************************/
+/*@Function Name: read_frame
+ *@Brief        : reads the frame from the camera and calls the prcess_image function for further processing.
+ *@Param in 	: void
+ *@Return       : 1 (SUCCESS)
+ * */
+static int read_frame(void)
+{
+    //struct v4l2_buffer buf;
+    unsigned int i;
+
+    switch (io)
+    {
+
+        case IO_METHOD_READ:
+            if (-1 == read(fd, buffers[0].start, buffers[0].length))
+            {
+                switch (errno)
+                {
+
+                    case EAGAIN:
+                        return 0;
+
+                    case EIO:
+                        /* Could ignore EIO, see spec. */
+
+                        /* fall through */
+
+                    default:
+                        errno_exit("read");
+                }
+            }
+
+            process_image(buffers[0].start, buffers[0].length);
+            break;
+
+        case IO_METHOD_MMAP:
+            CLEAR(buf);
+
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+
+            if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf))
+            {
+                switch (errno)
+                {
+                    case EAGAIN:
+                        return 0;
+
+                    case EIO:
+                        /* Could ignore EIO, but drivers should only set for serious errors, although some set for
+                           non-fatal errors too.
+                         */
+                        return 0;
+
+
+                    default:
+                        printf("mmap failure\n");
+                        errno_exit("VIDIOC_DQBUF");
+                }
+            }
+
+            assert(buf.index < n_buffers);
+
+            process_image(buffers[buf.index].start, buf.bytesused);
+
+            if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+                    errno_exit("VIDIOC_QBUF");
+            break;
+
+        case IO_METHOD_USERPTR:
+            CLEAR(buf);
+
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_USERPTR;
+
+            if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf))
+            {
+                switch (errno)
+                {
+                    case EAGAIN:
+                        return 0;
+
+                    case EIO:
+                        /* Could ignore EIO, see spec. */
+
+                        /* fall through */
+
+                    default:
+                        errno_exit("VIDIOC_DQBUF");
+                }
+            }
+
+            for (i = 0; i < n_buffers; ++i)
+                    if (buf.m.userptr == (unsigned long)buffers[i].start
+                        && buf.length == buffers[i].length)
+                            break;
+
+            assert(i < n_buffers);
+
+            process_image((void *)buf.m.userptr, buf.bytesused);
+
+            if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+                    errno_exit("VIDIOC_QBUF");
+            break;
+    }
+
+    return 1;
+}
 
 
 /******************************* FUNCTION 21 ****************************************/
+/*@Function Name: process_image
+ *@Brief        : Processes and applies transforms to image based on command line inputs specifying
+ 		  which transform to perform.
+ *@Param in [1] : const  void *p (Buffer which has to be processed)
+ *@Param in [2] : int size (Size of the Buffer being passed)
+ *@Return       : void
+ * */
+static void process_image(const void *p, int size)
+{
+    int i, newi, newsize=0;
+    struct timespec frame_time;
+    int y_temp, y2_temp, u_temp, v_temp;
+    unsigned char *pptr = (unsigned char *)p;
+
+    // record when process was called
+    clock_gettime(CLOCK_REALTIME, &frame_time);    
+
+    framecnt++;
+    //printf("frame %d: ", framecnt);
+
+    // This just dumps the frame to a file now, but you could replace with whatever image
+    // processing you wish.
+    //
+
+    if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_GREY)
+    {
+        printf("Dump graymap as-is size %d\n", size);
+        //dump_pgm(p, size, framecnt, &frame_time);
+    }
+
+    else if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_YUYV)
+    {
+	    //if(strcmp(transformation,"sharpen")==0)
+	    //{
+		    //printf("Dump YUYV converted to RGB size %d\n", size);
+		    // Pixels are YU and YV alternating, so YUYV which is 4 bytes
+		    // We want RGB, so RGBRGB which is 6 bytes
+		    //
+		    for(i=0, newi=0; i<size; i=i+4, newi=newi+6)
+		    {
+			    y_temp=(int)pptr[i];
+			    u_temp=(int)pptr[i+1];
+			    y2_temp=(int)pptr[i+2];
+			    v_temp=(int)pptr[i+3];
+			    yuv2rgb(y_temp, u_temp, v_temp, &bigbuffer[newi], &bigbuffer[newi+1], &bigbuffer[newi+2]);
+			    yuv2rgb(y2_temp, u_temp, v_temp, &bigbuffer[newi+3], &bigbuffer[newi+4], &bigbuffer[newi+5]);
+		    }
+		    //sharpen_image(bigbuffer,((size*6)/4));
+		    dump_ppm(bigbuffer, ((size*6)/4), framecnt, &frame_time);
+	   //}
+
+    }
+
+    else if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_RGB24)
+    {
+        printf("Dump RGB as-is size %d\n", size);
+        dump_ppm(p, size, framecnt, &frame_time);
+    }
+    else
+    {
+        printf("ERROR - unknown dump format\n");
+    }
+
+    fflush(stderr);
+    //fprintf(stderr, ".");
+    fflush(stdout);
+}
 
 
-/******************************* FUNCTION 21 ****************************************/
+/******************************* FUNCTION 22 ****************************************/
+/*@Function Name: dump_ppm
+ *@Brief        : Writes the pixel values into an image.
+ *@Param in [1] : const  void *p (Buffer which has to be converted to an image)
+ *@Param in [2] : int size (Size of the Buffer being passed)
+ *@Param in [3] : unsigned int tag (Tag for Header)
+ *@Param in [4] : struct timespec *time (Used to calculate timestamp for the Image header)
+ *@Return       : void
+ * */
+static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec *time)
+{
+    int written, i, total, dumpfd;
+    snprintf(&ppm_dumpname[4], 9, "%08d", tag);
+    strncat(&ppm_dumpname[12], ".ppm", 5);
+    dumpfd = open(ppm_dumpname, O_WRONLY | O_NONBLOCK | O_CREAT, 00666);
+    snprintf(&ppm_header[4], 11, "%010d", (int)time->tv_sec);
+    strncat(&ppm_header[14], " sec ", 5);
+    snprintf(&ppm_header[19], 11, "%010d", (int)((time->tv_nsec)/1000000));
+    //strncat(&ppm_header[29], " msec \n"HRES_STR" "VRES_STR"\n255\n", 19);
+    written=write(dumpfd, ppm_header, sizeof(ppm_header));
+    total=0;
+    do
+    {
+        written=write(dumpfd, p, size);
+        total+=written;
+    } while(total < size);
+    //printf("wrote %d bytes\n", total);
+    close(dumpfd);
+}
 
+/******************************* FUNCTION 23 ****************************************/
+/* This is probably the most acceptable conversion from camera YUYV to RGB.
+ * Wikipedia has a good discussion on the details of various conversions
+ * and cites good references http://en.wikipedia.org/wiki/YUV Also http://www.fourcc.org/yuv.php
+ * What's not clear without knowing more about the camera in question is how
+ * often U & V are sampled compare to Y.
+ * E.g. YUV444, which is equivalent to RGB, where both require 3 bytes for each pixel
+ * YUV422, which we assume here, where there are 2 bytes for each pixel, with two Y
+ * samples for one U & V, or as the name implies, 4Y and 2 UV pairs YUV420, where
+ * for every 4 Ys, there is a single UV pair, 1.5 bytes for each pixel or 36 bytes for 24 pixels.
+*/
+/*@Function Name    : yuv2rgb
+ *@Brief            : Converts image from YUYV format to RGBRGB format
+ *@Param in [1,2,3] : int y,int u,int v
+ *@Param in [4,5,6] : unsigned char* r, unsigned char*g, unsigned char* b
+ *@Return           : void
+ * */
+void yuv2rgb(int y, int u, int v, unsigned char *r, unsigned char *g, unsigned char *b)
+{
+   int r1, g1, b1;
+
+   // replaces floating point coefficients
+   int c = y-16, d = u - 128, e = v - 128;
+
+   // Conversion that avoids floating point
+   r1 = (298 * c           + 409 * e + 128) >> 8;
+   g1 = (298 * c - 100 * d - 208 * e + 128) >> 8;
+   b1 = (298 * c + 516 * d           + 128) >> 8;
+
+   // Computed values may need clipping.
+   if (r1 > 255) r1 = 255;
+   if (g1 > 255) g1 = 255;
+   if (b1 > 255) b1 = 255;
+
+   if (r1 < 0) r1 = 0;
+   if (g1 < 0) g1 = 0;
+   if (b1 < 0) b1 = 0;
+
+   *r = r1 ;
+   *g = g1 ;
+   *b = b1 ;
+}
+
+
+/******************************* FUNCTION 24 ****************************************/
+/******************************* FUNCTION 25 ****************************************/
+/******************************* FUNCTION 26 ****************************************/
+/******************************* FUNCTION 27 ****************************************/
 
 
 
@@ -1190,6 +1480,9 @@ int main(int argc, char **argv)
     	}
 
 
+	open_device();
+        init_device();
+        start_capturing();
 
 	/* Create Service threads which will block awaiting release for: */
     	
@@ -1249,6 +1542,11 @@ int main(int argc, char **argv)
 
 	for(int i=0;i<NUM_THREADS;i++)
 		pthread_join(threads[i], NULL);
+
+
+	stop_capturing();
+    	uninit_device();
+    	close_device();
 	
 	printf("\nTEST COMPLETE\n");
 
